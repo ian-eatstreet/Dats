@@ -1,15 +1,15 @@
 #Version Age Tracker Script
 require "gems"
 require "date"
-require "pry"
 
 class Dats
-  attr_accessor :messages, :gemfile_contents, :ancient, :crusty, :stale, :fresh, :not_found, :gem_info, :date
+  TWO_YEARS = 730
+  FOUR_YEARS = 1460
+  attr_accessor :gemfile_contents, :ancient, :crusty, :stale, :fresh, :not_found, :gem_info, :date
 
   def initialize(gemfile, lockfile)
     @gemfile = gemfile
     @lockfile = lockfile
-    @messages = []
     @gemfile_contents = []
     @ancient = []
     @crusty = []
@@ -23,7 +23,6 @@ class Dats
   def run
     yank_gemfile_names
     get_gem_info
-    # binding.pry
     output_to_file
   end
 
@@ -42,17 +41,15 @@ class Dats
       if line.match?(/\w+ \(\d/)
         gem_name, version = line.split(" ")
         # strip parentheses from version number
-        next if gem_name == "sidekiq-pro" || gem_name == "StreetAddress"
         version = version.slice(1..-2)
+        next if gem_name == "sidekiq-pro" || gem_name == "StreetAddress"
         next unless gemfile_contents.include?(gem_name)
 
         begin
           rubygems_json = Gems.versions(gem_name)
-          # binding.pry
           @gem_info[gem_name] = {}
           @gem_info[gem_name][:active_version_info] = rubygems_json.select { |v| v["number"] == version }[0]
           @gem_info[gem_name][:latest_version_info] = rubygems_json[0]
-          # binding.pry
         rescue NoMethodError
           @not_found << gem_name
           next
@@ -65,7 +62,6 @@ class Dats
           @gem_info[gem_name][:active_build_date] = @gem_info[gem_name][:active_version_info]["built_at"]
           @gem_info[gem_name][:latest_build_date] = @gem_info[gem_name][:latest_version_info]["built_at"]
         end
-        # binding.pry
         categorize_gem_age(gem_name)
       end
     end
@@ -74,60 +70,56 @@ class Dats
   def categorize_gem_age(gem_name)
     age = Date.parse(@gem_info[gem_name][:latest_build_date]) - Date.parse(@gem_info[gem_name][:active_build_date])
 
-    #create contants for time spans
-    if age.to_i == 0
+    if age.to_i.zero?
       fresh << gem_name
-    elsif age.to_i > 0 && age.to_i < 730
+    elsif age.to_i.positive? && age.to_i < TWO_YEARS
       stale << gem_name
-    elsif age.to_i >= 730 && age.to_i < 1460
+    elsif age.to_i >= TWO_YEARS && age.to_i < FOUR_YEARS
       crusty << gem_name
-    elsif age.to_i >= 1460
+    elsif age.to_i >= FOUR_YEARS
       ancient << gem_name
     end
   end
 
   def output_to_file
-    unless @fresh.empty?
-      puts "Up to date gems:"
-      @fresh.each do |gem_name|
-        puts "#{gem_name}"
-      end
-    end
-
-    unless @stale.empty?
-      puts "2 years old or less"
-      @stale.each do |gem_name|
-        # binding.pry
-        puts "#{gem_name} - Using: #{@gem_info[gem_name][:active_version_number]}, Latest: #{@gem_info[gem_name][:latest_version_number]}"
-      end
-    end
-    unless @crusty.empty?
-      puts "Between 2 and 4 years old"
-      @crusty.each do |gem_name|
-        puts "#{gem_name} - Using: #{@gem_info[gem_name][:active_version_number]}, Latest: #{@gem_info[gem_name][:latest_version_number]}"
+    messages = ["#{Date.today.strftime("%Y-%m-%d")}"]
+    write_gem_info = lambda do |var|
+      var.each do |gem_name|
+        messages << "#{gem_name} - Using: #{@gem_info[gem_name][:active_version_number]}, Latest: #{@gem_info[gem_name][:latest_version_number]}"
       end
     end
 
     unless @ancient.empty?
-      puts "4 years old or greater"
-      @stale.each do |gem_name|
-        puts "#{gem_name} - Using: #{@gem_info[gem_name][:active_version_number]}, Latest: #{@gem_info[gem_name][:latest_version_number]}"
+      messages << "\n4 years old or greater\n"
+      write_gem_info.call(@ancient)
+    end
+
+    unless @crusty.empty?
+      messages << "\nBetween 2 and 4 years old\n"
+      write_gem_info.call(@crusty)
+    end
+
+    unless @stale.empty?
+      messages << "\n2 years old or less\n"
+      write_gem_info.call(@stale)
+    end
+
+    unless @fresh.empty?
+      messages << "\nUp to date gems:\n"
+      @fresh.each do |gem_name|
+        messages << "#{gem_name}"
       end
     end
 
     unless @not_found.empty?
-      puts "Not hosted on RubyGems"
+      messages << "\nNot hosted on RubyGems\n"
       @not_found.each do |gem_name|
-        puts "#{gem_name}"
+        messages << "#{gem_name}"
       end
     end
+    File.write("crusty_gems.txt", messages.join("\n"), mode: "w")
   end
 end
-
-# gemfile = ARGV[0]
-# lockfile = ARGV[1]
-
-# File.write("crusty_gems.txt", messages.join(" "), mode: "w")
 
 dat = Dats.new(ARGV[0], ARGV[1])
 dat.run
